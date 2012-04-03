@@ -34,39 +34,45 @@ import android.webkit.SslErrorHandler;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import android.webkit.WebResourceResponse;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import java.io.IOException;
+import java.io.InputStream;
+
 /**
  * This class is the WebViewClient that implements callbacks for our web view.
  */
 public class CordovaWebViewClient extends WebViewClient {
-    
+
     private static final String TAG = "Cordova";
     DroidGap ctx;
     private boolean doClearHistory = false;
 
     /**
      * Constructor.
-     * 
+     *
      * @param ctx
      */
     public CordovaWebViewClient(DroidGap ctx) {
         this.ctx = ctx;
     }
-    
+
     /**
-     * Give the host application a chance to take over the control when a new url 
+     * Give the host application a chance to take over the control when a new url
      * is about to be loaded in the current WebView.
-     * 
+     *
      * @param view          The WebView that is initiating the callback.
      * @param url           The url to be loaded.
      * @return              true to override, false for default behavior
      */
     @Override
     public boolean shouldOverrideUrlLoading(WebView view, String url) {
-        
+
         // First give any plugins the chance to handle the url themselves
         if ((this.ctx.pluginManager != null) && this.ctx.pluginManager.onOverrideUrlLoading(url)) {
         }
-        
+
         // If dialing phone (tel:5551212)
         else if (url.startsWith(WebView.SCHEME_TEL)) {
             try {
@@ -154,11 +160,11 @@ public class CordovaWebViewClient extends WebViewClient {
         }
         return true;
     }
-    
+
     /**
      * On received http auth request.
-     * The method reacts on all registered authentication tokens. There is one and only one authentication token for any host + realm combination 
-     * 
+     * The method reacts on all registered authentication tokens. There is one and only one authentication token for any host + realm combination
+     *
      * @param view
      *            the view
      * @param handler
@@ -171,27 +177,27 @@ public class CordovaWebViewClient extends WebViewClient {
     @Override
     public void onReceivedHttpAuthRequest(WebView view, HttpAuthHandler handler, String host,
             String realm) {
-       
+
         // get the authentication token
         AuthenticationToken token = ctx.getAuthenticationToken(host,realm);
-        
+
         if(token != null) {
             handler.proceed(token.getUserName(), token.getPassword());
         }
     }
 
-    
+
     @Override
     public void onPageStarted(WebView view, String url, Bitmap favicon) {
-        // Clear history so history.back() doesn't do anything.  
+        // Clear history so history.back() doesn't do anything.
         // So we can reinit() native side CallbackServer & PluginManager.
-        view.clearHistory(); 
+        view.clearHistory();
         this.doClearHistory = true;
     }
-    
+
     /**
      * Notify the host application that a page has finished loading.
-     * 
+     *
      * @param view          The webview initiating the callback.
      * @param url           The url of the page.
      */
@@ -200,8 +206,8 @@ public class CordovaWebViewClient extends WebViewClient {
         super.onPageFinished(view, url);
 
         /**
-         * Because of a timing issue we need to clear this history in onPageFinished as well as 
-         * onPageStarted. However we only want to do this if the doClearHistory boolean is set to 
+         * Because of a timing issue we need to clear this history in onPageFinished as well as
+         * onPageStarted. However we only want to do this if the doClearHistory boolean is set to
          * true. You see when you load a url with a # in it which is common in jQuery applications
          * onPageStared is not called. Clearing the history at that point would break jQuery apps.
          */
@@ -252,15 +258,15 @@ public class CordovaWebViewClient extends WebViewClient {
             this.ctx.endActivity();
         }
     }
-    
+
     /**
-     * Report an error to the host application. These errors are unrecoverable (i.e. the main resource is unavailable). 
+     * Report an error to the host application. These errors are unrecoverable (i.e. the main resource is unavailable).
      * The errorCode parameter corresponds to one of the ERROR_* constants.
      *
      * @param view          The WebView that is initiating the callback.
      * @param errorCode     The error code corresponding to an ERROR_* value.
      * @param description   A String describing the error.
-     * @param failingUrl    The url that failed to load. 
+     * @param failingUrl    The url that failed to load.
      */
     @Override
     public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
@@ -275,9 +281,9 @@ public class CordovaWebViewClient extends WebViewClient {
         // Handle error
         this.ctx.onReceivedError(errorCode, description, failingUrl);
     }
-    
+
     public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
-        
+
         final String packageName = this.ctx.getPackageName();
         final PackageManager pm = this.ctx.getPackageManager();
         ApplicationInfo appInfo;
@@ -289,7 +295,7 @@ public class CordovaWebViewClient extends WebViewClient {
                 return;
             } else {
                 // debug = false
-                super.onReceivedSslError(view, handler, error);    
+                super.onReceivedSslError(view, handler, error);
             }
         } catch (NameNotFoundException e) {
             // When it doubt, lock it out!
@@ -299,12 +305,46 @@ public class CordovaWebViewClient extends WebViewClient {
 
     @Override
     public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
-        /* 
+        /*
          * If you do a document.location.href the url does not get pushed on the stack
          * so we do a check here to see if the url should be pushed.
          */
         if (!this.ctx.peekAtUrlStack().equals(url)) {
             this.ctx.pushUrl(url);
+        }
+    }
+
+    /**
+     * Fixes a bug in Android 3.x, cannot append query data to local resources,
+     * eg: file:///android_asset/www/index.html?id=2
+     *
+     * The bug thread: http://code.google.com/p/android/issues/detail?id=17535
+     * The patch thread: http://stackoverflow.com/questions/9302306/issue-with-loading-local-javascript-files-inside-a-webview
+     *
+     * Fixed by jtymann, http://stackoverflow.com/users/124568/jtymann
+     */
+    @Override
+    public WebResourceResponse shouldInterceptRequest(WebView view, String url) {
+
+        if(url.indexOf("file:///android_asset") == 0 && url.contains("?")) {
+
+            String filePath = url.substring(22, url.length());
+            filePath = filePath.substring(0, filePath.indexOf("?"));
+
+            try {
+
+                InputStream is = ctx.getAssets().open(filePath);
+                WebResourceResponse wr = new WebResourceResponse("text/javascript", "Cp1252", is);
+                return wr;
+
+            } catch (IOException e) {
+                LOG.e(TAG, "URL=%s, e: ", e.toString());
+                return null;
+            }
+
+        } else {
+            LOG.d(TAG, "URL=%s", url);
+            return null;
         }
     }
 }
