@@ -517,20 +517,15 @@ public class CordovaWebViewClient extends WebViewClient {
     @Override
     public WebResourceResponse shouldInterceptRequest(WebView view, String url) {
 
-        LOG.d(TAG, "> shouldInterceptRequest");
-
         if(url.indexOf("file:///android_asset") == 0 && url.contains("?")) {
 
             String filePath = url.substring(22, url.length());
             filePath = filePath.substring(0, filePath.indexOf("?"));
 
-            LOG.d(TAG, "2. filePath=%s", filePath);
-
             try {
 
                 InputStream is = ctx.getAssets().open(filePath);
                 WebResourceResponse wr = new WebResourceResponse("text/javascript", "Cp1252", is);
-                LOG.d(TAG, "2. return wr;");
                 return wr;
 
             } catch (IOException e) {
