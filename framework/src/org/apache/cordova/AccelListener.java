@@ -19,14 +19,12 @@
 package org.apache.cordova;
 
 import java.util.List;
-
 import org.apache.cordova.api.CordovaInterface;
 import org.apache.cordova.api.Plugin;
 import org.apache.cordova.api.PluginResult;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
-
 
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
@@ -35,25 +33,25 @@ import android.hardware.SensorManager;
 import android.content.Context;
 
 /**
- * This class listens to the accelerometer sensor and stores the latest 
+ * This class listens to the accelerometer sensor and stores the latest
  * acceleration values x,y,z.
  */
 public class AccelListener extends Plugin implements SensorEventListener {
 
-	public static int STOPPED = 0;
-	public static int STARTING = 1;
+    public static int STOPPED = 0;
+    public static int STARTING = 1;
     public static int RUNNING = 2;
     public static int ERROR_FAILED_TO_START = 3;
-    
-    public float TIMEOUT = 30000;		// Timeout in msec to shut off listener
-    
-    float x,y,z;						// most recent acceleration values
-    long timestamp;						// time of most recent value
-    int status;							// status of listener
-    long lastAccessTime;				// time the value was last retrieved
+   
+    private float x,y,z;                                // most recent acceleration values
+    private long timestamp;                         // time of most recent value
+    private int status;                                 // status of listener
+    private int accuracy = SensorManager.SENSOR_STATUS_UNRELIABLE;
 
-    private SensorManager sensorManager;// Sensor manager
-    Sensor mSensor;						// Acceleration sensor returned by sensor manager
+    private SensorManager sensorManager;    // Sensor manager
+    private Sensor mSensor;                           // Acceleration sensor returned by sensor manager
+
+    private String callbackId;              // Keeps track of the single "start" callback ID passed in from JS
 
     /**
      * Create an accelerometer listener.
@@ -65,247 +63,204 @@ public class AccelListener extends Plugin implements SensorEventListener {
         this.timestamp = 0;
         this.setStatus(AccelListener.STOPPED);
      }
-    
-	/**
-	 * Sets the context of the Command. This can then be used to do things like
-	 * get file paths associated with the Activity.
-	 * 
-	 * @param ctx The context of the main Activity.
-	 */
-	public void setContext(CordovaInterface ctx) {
-		super.setContext(ctx);
-        this.sensorManager = (SensorManager) ctx.getSystemService(Context.SENSOR_SERVICE);
-	}
 
-	/**
-	 * Executes the request and returns PluginResult.
-	 * 
-	 * @param action 		The action to execute.
-	 * @param args 			JSONArry of arguments for the plugin.
-	 * @param callbackId	The callback id used when calling back into JavaScript.
-	 * @return 				A PluginResult object with a status and message.
-	 */
-	public PluginResult execute(String action, JSONArray args, String callbackId) {
-		PluginResult.Status status = PluginResult.Status.OK;
-		String result = "";		
-		
-		try {
-			if (action.equals("getStatus")) {
-				int i = this.getStatus();
-				return new PluginResult(status, i);
-			}
-			else if (action.equals("start")) {
-				int i = this.start();
-				return new PluginResult(status, i);
-			}
-			else if (action.equals("stop")) {
-				this.stop();
-				return new PluginResult(status, 0);
-			}
-			else if (action.equals("getAcceleration")) {
-				// If not running, then this is an async call, so don't worry about waiting
-				if (this.status != AccelListener.RUNNING) {
-					int r = this.start();
-					if (r == AccelListener.ERROR_FAILED_TO_START) {
-						return new PluginResult(PluginResult.Status.IO_EXCEPTION, AccelListener.ERROR_FAILED_TO_START);
-					}
-					// Wait until running
-					long timeout = 2000;
-					while ((this.status == STARTING) && (timeout > 0)) {
-						timeout = timeout - 100;
-						try {
-							Thread.sleep(100);
-						} catch (InterruptedException e) {
-							e.printStackTrace();
-						}
-					}
-					if (timeout == 0) {
-						return new PluginResult(PluginResult.Status.IO_EXCEPTION, AccelListener.ERROR_FAILED_TO_START);						
-					}
-				}
-	            this.lastAccessTime = System.currentTimeMillis();
-				JSONObject r = new JSONObject();
-				r.put("x", this.x);
-				r.put("y", this.y);
-				r.put("z", this.z);
-				// TODO: Should timestamp be sent?
-				r.put("timestamp", this.timestamp);
-				return new PluginResult(status, r);
-			}
-			else if (action.equals("setTimeout")) {
-				try {
-					float timeout = Float.parseFloat(args.getString(0));
-					this.setTimeout(timeout);
-					return new PluginResult(status, 0);
-				} catch (NumberFormatException e) {
-					status = PluginResult.Status.INVALID_ACTION;
-					e.printStackTrace();
-				} catch (JSONException e) {
-					status = PluginResult.Status.JSON_EXCEPTION;
-					e.printStackTrace();
-				}
-			}
-			else if (action.equals("getTimeout")) {
-				float f = this.getTimeout();
-				return new PluginResult(status, f);
-			} else {
-        // Unsupported action
-        return new PluginResult(PluginResult.Status.INVALID_ACTION);
-      }
-			return new PluginResult(status, result);
-		} catch (JSONException e) {
-			return new PluginResult(PluginResult.Status.JSON_EXCEPTION);
-		}
-	}
+    /**
+     * Sets the context of the Command. This can then be used to do things like
+     * get file paths associated with the Activity.
+     *
+     * @param cordova The context of the main Activity.
+     */
 
-	/**
-	 * Identifies if action to be executed returns a value and should be run synchronously.
-	 * 
-	 * @param action	The action to execute
-	 * @return			T=returns value
-	 */
-	public boolean isSynch(String action) {
-		if (action.equals("getStatus")) {
-			return true;
-		}
-		else if (action.equals("getAcceleration")) {
-			// Can only return value if RUNNING
-			if (this.status == AccelListener.RUNNING) {
-				return true;
-			}
-		}
-		else if (action.equals("getTimeout")) {
-			return true;
-		}
-		return false;
-	}
-    
+    public void setContext(CordovaInterface cordova) {
+        super.setContext(cordova);
+        this.sensorManager = (SensorManager) cordova.getActivity().getSystemService(Context.SENSOR_SERVICE);
+    }
+
+    /**
+     * Executes the request and returns PluginResult.
+     * 
+     * @param action        The action to execute.
+     * @param args          JSONArry of arguments for the plugin.
+     * @param callbackId    The callback id used when calling back into JavaScript.
+     * @return              A PluginResult object with a status and message.
+     */
+    public PluginResult execute(String action, JSONArray args, String callbackId) {
+        PluginResult.Status status = PluginResult.Status.NO_RESULT;
+        String message = "";
+        PluginResult result = new PluginResult(status, message);
+        result.setKeepCallback(true);
+
+        if (action.equals("start")) {
+            this.callbackId = callbackId;
+            if (this.status != AccelListener.RUNNING) {
+                // If not running, then this is an async call, so don't worry about waiting
+                // We drop the callback onto our stack, call start, and let start and the sensor callback fire off the callback down the road
+                this.start();
+            }
+        }
+        else if (action.equals("stop")) {
+            if (this.status == AccelListener.RUNNING) {
+                this.stop();
+            }
+        } else {
+          // Unsupported action
+            return new PluginResult(PluginResult.Status.INVALID_ACTION);
+        }
+        return result;
+    }
+
     /**
      * Called by AccelBroker when listener is to be shut down.
      * Stop listener.
      */
     public void onDestroy() {
-    	this.stop();    	
+        this.stop();
     }
 
     //--------------------------------------------------------------------------
     // LOCAL METHODS
     //--------------------------------------------------------------------------
-
+    //
     /**
      * Start listening for acceleration sensor.
      * 
-     * @return 			status of listener
-     */
-    public int start() {
-
-		// If already starting or running, then just return
+     * @return          status of listener
+    */
+    private int start() {
+        // If already starting or running, then just return
         if ((this.status == AccelListener.RUNNING) || (this.status == AccelListener.STARTING)) {
-        	return this.status;
+            return this.status;
         }
+
+        this.setStatus(AccelListener.STARTING);
 
         // Get accelerometer from sensor manager
         List<Sensor> list = this.sensorManager.getSensorList(Sensor.TYPE_ACCELEROMETER);
-        
+
         // If found, then register as listener
         if ((list != null) && (list.size() > 0)) {
-            this.mSensor = list.get(0);
-            this.sensorManager.registerListener(this, this.mSensor, SensorManager.SENSOR_DELAY_FASTEST);
-            this.setStatus(AccelListener.STARTING);
-            this.lastAccessTime = System.currentTimeMillis();
+          this.mSensor = list.get(0);
+          this.sensorManager.registerListener(this, this.mSensor, SensorManager.SENSOR_DELAY_UI);
+          this.setStatus(AccelListener.STARTING);
+        } else {
+          this.setStatus(AccelListener.ERROR_FAILED_TO_START);
+          this.fail(AccelListener.ERROR_FAILED_TO_START, "No sensors found to register accelerometer listening to.");
+          return this.status;
         }
         
-        // If error, then set status to error
-        else {
-            this.setStatus(AccelListener.ERROR_FAILED_TO_START);
+        // Wait until running
+        long timeout = 2000;
+        while ((this.status == STARTING) && (timeout > 0)) {
+          timeout = timeout - 100;
+          try {
+              Thread.sleep(100);
+          } catch (InterruptedException e) {
+              e.printStackTrace();
+          }
         }
-        
+        if (timeout == 0) {
+          this.setStatus(AccelListener.ERROR_FAILED_TO_START);
+          this.fail(AccelListener.ERROR_FAILED_TO_START, "Accelerometer could not be started.");
+        }
         return this.status;
     }
 
     /**
      * Stop listening to acceleration sensor.
      */
-    public void stop() {
+    private void stop() {
         if (this.status != AccelListener.STOPPED) {
-        	this.sensorManager.unregisterListener(this);
+            this.sensorManager.unregisterListener(this);
         }
         this.setStatus(AccelListener.STOPPED);
+        this.accuracy = SensorManager.SENSOR_STATUS_UNRELIABLE;
     }
 
     /**
      * Called when the accuracy of the sensor has changed.
-     * 
+     *
      * @param sensor
      * @param accuracy
      */
     public void onAccuracyChanged(Sensor sensor, int accuracy) {
+        // Only look at accelerometer events
+        if (sensor.getType() != Sensor.TYPE_ACCELEROMETER) {
+            return;
+        }
+
+        // If not running, then just return
+        if (this.status == AccelListener.STOPPED) {
+            return;
+        }
+        this.accuracy = accuracy;
     }
 
     /**
      * Sensor listener event.
-     * 
+     *
      * @param SensorEvent event
      */
     public void onSensorChanged(SensorEvent event) {
-    	
-    	// Only look at accelerometer events
+        // Only look at accelerometer events
         if (event.sensor.getType() != Sensor.TYPE_ACCELEROMETER) {
             return;
         }
-        
+
         // If not running, then just return
         if (this.status == AccelListener.STOPPED) {
-        	return;
+            return;
         }
-        
-        // Save time that event was received
-        this.timestamp = System.currentTimeMillis();
-        this.x = event.values[0];
-        this.y = event.values[1];
-        this.z = event.values[2];            
-
         this.setStatus(AccelListener.RUNNING);
 
-        // If values haven't been read for TIMEOUT time, then turn off accelerometer sensor to save power
-		if ((this.timestamp - this.lastAccessTime) > this.TIMEOUT) {
-			this.stop();
-		}		
+        if (this.accuracy >= SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM) {
+
+            // Save time that event was received
+            this.timestamp = System.nanoTime();
+            this.x = event.values[0];
+            this.y = event.values[1];
+            this.z = event.values[2];
+
+            this.win();
+        }
     }
 
-    /**
-     * Get status of accelerometer sensor.
-     * 
-     * @return			status
-     */
-	public int getStatus() {
-		return this.status;
-	}
-		
-	/**
-	 * Set the timeout to turn off accelerometer sensor if getX() hasn't been called.
-	 * 
-	 * @param timeout		Timeout in msec.
-	 */
-	public void setTimeout(float timeout) {
-		this.TIMEOUT = timeout;
-	}
-	
-	/**
-	 * Get the timeout to turn off accelerometer sensor if getX() hasn't been called.
-	 * 
-	 * @return timeout in msec
-	 */
-	public float getTimeout() {
-		return this.TIMEOUT;
-	}
-	
-	/**
-	 * Set the status and send it to JavaScript.
-	 * @param status
-	 */
-	private void setStatus(int status) {
-		this.status = status;
-	}
-    
+    // Sends an error back to JS
+    private void fail(int code, String message) {
+        // Error object
+        JSONObject errorObj = new JSONObject();
+        try {
+            errorObj.put("code", code);
+            errorObj.put("message", message);
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        PluginResult err = new PluginResult(PluginResult.Status.ERROR, errorObj);
+        err.setKeepCallback(true);
+
+        this.error(err, this.callbackId);
+    }
+
+    private void win() {
+        // Success return object
+        PluginResult result = new PluginResult(PluginResult.Status.OK, this.getAccelerationJSON());
+        result.setKeepCallback(true);
+
+        this.success(result, this.callbackId);
+    }
+
+    private void setStatus(int status) {
+        this.status = status;
+    }
+    private JSONObject getAccelerationJSON() {
+        JSONObject r = new JSONObject();
+        try {
+            r.put("x", this.x);
+            r.put("y", this.y);
+            r.put("z", this.z);
+            r.put("timestamp", this.timestamp);
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        return r;
+    }
 }

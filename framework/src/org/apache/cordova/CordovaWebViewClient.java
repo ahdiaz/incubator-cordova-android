@@ -18,19 +18,29 @@
 */
 package org.apache.cordova;
 
-import org.apache.cordova.api.LOG;
+import java.util.Hashtable;
 
+import org.apache.cordova.api.CordovaInterface;
+import java.io.IOException;
+import java.io.InputStream;
+
+import org.apache.cordova.api.LOG;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
+import android.content.res.AssetManager;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.net.http.SslError;
-import android.util.Log;
 import android.view.View;
 import android.webkit.HttpAuthHandler;
 import android.webkit.SslErrorHandler;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
@@ -46,16 +56,40 @@ import java.io.InputStream;
 public class CordovaWebViewClient extends WebViewClient {
 
     private static final String TAG = "Cordova";
-    DroidGap ctx;
+    CordovaInterface cordova;
+    CordovaWebView appView;
     private boolean doClearHistory = false;
+
+    /** The authorization tokens. */
+    private Hashtable<String, AuthenticationToken> authenticationTokens = new Hashtable<String, AuthenticationToken>();
 
     /**
      * Constructor.
      *
-     * @param ctx
+     * @param cordova
      */
-    public CordovaWebViewClient(DroidGap ctx) {
-        this.ctx = ctx;
+    public CordovaWebViewClient(CordovaInterface cordova) {
+        this.cordova = cordova;
+    }
+
+    /**
+     * Constructor.
+     *
+     * @param cordova
+     * @param view
+     */
+    public CordovaWebViewClient(CordovaInterface cordova, CordovaWebView view) {
+        this.cordova = cordova;
+        this.appView = view;
+    }
+
+    /**
+     * Constructor.
+     *
+     * @param view
+     */
+    public void setWebView(CordovaWebView view) {
+        this.appView = view;
     }
 
     /**
@@ -70,7 +104,7 @@ public class CordovaWebViewClient extends WebViewClient {
     public boolean shouldOverrideUrlLoading(WebView view, String url) {
 
         // First give any plugins the chance to handle the url themselves
-        if ((this.ctx.pluginManager != null) && this.ctx.pluginManager.onOverrideUrlLoading(url)) {
+        if ((this.appView.pluginManager != null) && this.appView.pluginManager.onOverrideUrlLoading(url)) {
         }
 
         // If dialing phone (tel:5551212)
@@ -78,9 +112,9 @@ public class CordovaWebViewClient extends WebViewClient {
             try {
                 Intent intent = new Intent(Intent.ACTION_DIAL);
                 intent.setData(Uri.parse(url));
-                ctx.startActivity(intent);
+                this.cordova.getActivity().startActivity(intent);
             } catch (android.content.ActivityNotFoundException e) {
-                LOG.e(TAG, "Error dialing "+url+": "+ e.toString());
+                LOG.e(TAG, "Error dialing " + url + ": " + e.toString());
             }
         }
 
@@ -89,9 +123,9 @@ public class CordovaWebViewClient extends WebViewClient {
             try {
                 Intent intent = new Intent(Intent.ACTION_VIEW);
                 intent.setData(Uri.parse(url));
-                ctx.startActivity(intent);
+                this.cordova.getActivity().startActivity(intent);
             } catch (android.content.ActivityNotFoundException e) {
-                LOG.e(TAG, "Error showing map "+url+": "+ e.toString());
+                LOG.e(TAG, "Error showing map " + url + ": " + e.toString());
             }
         }
 
@@ -100,9 +134,9 @@ public class CordovaWebViewClient extends WebViewClient {
             try {
                 Intent intent = new Intent(Intent.ACTION_VIEW);
                 intent.setData(Uri.parse(url));
-                ctx.startActivity(intent);
+                this.cordova.getActivity().startActivity(intent);
             } catch (android.content.ActivityNotFoundException e) {
-                LOG.e(TAG, "Error sending email "+url+": "+ e.toString());
+                LOG.e(TAG, "Error sending email " + url + ": " + e.toString());
             }
         }
 
@@ -129,12 +163,12 @@ public class CordovaWebViewClient extends WebViewClient {
                         }
                     }
                 }
-                intent.setData(Uri.parse("sms:"+address));
+                intent.setData(Uri.parse("sms:" + address));
                 intent.putExtra("address", address);
                 intent.setType("vnd.android-dir/mms-sms");
-                ctx.startActivity(intent);
+                this.cordova.getActivity().startActivity(intent);
             } catch (android.content.ActivityNotFoundException e) {
-                LOG.e(TAG, "Error sending sms "+url+":"+ e.toString());
+                LOG.e(TAG, "Error sending sms " + url + ":" + e.toString());
             }
         }
 
@@ -143,8 +177,12 @@ public class CordovaWebViewClient extends WebViewClient {
 
             // If our app or file:, then load into a new Cordova webview container by starting a new instance of our activity.
             // Our app continues to run.  When BACK is pressed, our app is redisplayed.
-            if (url.startsWith("file://") || url.indexOf(this.ctx.baseUrl) == 0 || ctx.isUrlWhiteListed(url)) {
-                this.ctx.loadUrl(url);
+            if (url.startsWith("file://") || url.indexOf(this.appView.baseUrl) == 0 || this.appView.isUrlWhiteListed(url)) {
+                //This will fix iFrames
+                if (appView.useBrowserHistory)
+                    return false;
+                else
+                    this.appView.loadUrl(url);
             }
 
             // If not our application, let default viewer handle
@@ -152,9 +190,9 @@ public class CordovaWebViewClient extends WebViewClient {
                 try {
                     Intent intent = new Intent(Intent.ACTION_VIEW);
                     intent.setData(Uri.parse(url));
-                    ctx.startActivity(intent);
+                    this.cordova.getActivity().startActivity(intent);
                 } catch (android.content.ActivityNotFoundException e) {
-                    LOG.e(TAG, "Error loading url "+url, e);
+                    LOG.e(TAG, "Error loading url " + url, e);
                 }
             }
         }
@@ -166,37 +204,55 @@ public class CordovaWebViewClient extends WebViewClient {
      * The method reacts on all registered authentication tokens. There is one and only one authentication token for any host + realm combination
      *
      * @param view
-     *            the view
      * @param handler
-     *            the handler
      * @param host
-     *            the host
      * @param realm
-     *            the realm
      */
     @Override
-    public void onReceivedHttpAuthRequest(WebView view, HttpAuthHandler handler, String host,
-            String realm) {
+    public void onReceivedHttpAuthRequest(WebView view, HttpAuthHandler handler, String host, String realm) {
 
-        // get the authentication token
-        AuthenticationToken token = ctx.getAuthenticationToken(host,realm);
-
-        if(token != null) {
+        // Get the authentication token
+        AuthenticationToken token = this.getAuthenticationToken(host, realm);
+        if (token != null) {
             handler.proceed(token.getUserName(), token.getPassword());
         }
     }
 
-
+    /**
+     * Notify the host application that a page has started loading.
+     * This method is called once for each main frame load so a page with iframes or framesets will call onPageStarted
+     * one time for the main frame. This also means that onPageStarted will not be called when the contents of an
+     * embedded frame changes, i.e. clicking a link whose target is an iframe.
+     *
+     * @param view          The webview initiating the callback.
+     * @param url           The url of the page.
+     */
     @Override
     public void onPageStarted(WebView view, String url, Bitmap favicon) {
         // Clear history so history.back() doesn't do anything.
         // So we can reinit() native side CallbackServer & PluginManager.
-        view.clearHistory();
-        this.doClearHistory = true;
+        if (!this.appView.useBrowserHistory) {
+            view.clearHistory();
+            this.doClearHistory = true;
+        }
+
+        // Create callback server and plugin manager
+        if (this.appView.callbackServer == null) {
+            this.appView.callbackServer = new CallbackServer();
+            this.appView.callbackServer.init(url);
+        }
+        else {
+            this.appView.callbackServer.reinit(url);
+        }
+
+        // Broadcast message that page has loaded
+        this.appView.postMessage("onPageStarted", url);
     }
 
     /**
      * Notify the host application that a page has finished loading.
+     * This method is called only for main frame. When onPageFinished() is called, the rendering picture may not be updated yet.
+     *
      *
      * @param view          The webview initiating the callback.
      * @param url           The url of the page.
@@ -204,6 +260,7 @@ public class CordovaWebViewClient extends WebViewClient {
     @Override
     public void onPageFinished(WebView view, String url) {
         super.onPageFinished(view, url);
+        LOG.d(TAG, "onPageFinished(" + url + ")");
 
         /**
          * Because of a timing issue we need to clear this history in onPageFinished as well as
@@ -217,29 +274,28 @@ public class CordovaWebViewClient extends WebViewClient {
         }
 
         // Clear timeout flag
-        this.ctx.loadUrlTimeout++;
+        this.appView.loadUrlTimeout++;
 
         // Try firing the onNativeReady event in JS. If it fails because the JS is
         // not loaded yet then just set a flag so that the onNativeReady can be fired
         // from the JS side when the JS gets to that code.
         if (!url.equals("about:blank")) {
-            ctx.appView.loadUrl("javascript:try{ cordova.require('cordova/channel').onNativeReady.fire();}catch(e){_nativeReady = true;}");
-            this.ctx.postMessage("onNativeReady", null);
+            this.appView.loadUrl("javascript:try{ cordova.require('cordova/channel').onNativeReady.fire();}catch(e){_nativeReady = true;}");
+            this.appView.postMessage("onNativeReady", null);
         }
 
+        // Broadcast message that page has loaded
+        this.appView.postMessage("onPageFinished", url);
+
         // Make app visible after 2 sec in case there was a JS error and Cordova JS never initialized correctly
-        if (ctx.appView.getVisibility() == View.INVISIBLE) {
+        if (this.appView.getVisibility() == View.INVISIBLE) {
             Thread t = new Thread(new Runnable() {
                 public void run() {
                     try {
                         Thread.sleep(2000);
-                        ctx.runOnUiThread(new Runnable() {
+                        cordova.getActivity().runOnUiThread(new Runnable() {
                             public void run() {
-                                if (ctx.splashscreen != 0) {
-                                    ctx.root.setBackgroundResource(0);
-                                }
-                                ctx.appView.setVisibility(View.VISIBLE);
-                                ctx.spinnerStop();
+                                appView.postMessage("spinner", "stop");
                             }
                         });
                     } catch (InterruptedException e) {
@@ -249,13 +305,12 @@ public class CordovaWebViewClient extends WebViewClient {
             t.start();
         }
 
-
         // Shutdown if blank loaded
         if (url.equals("about:blank")) {
-            if (this.ctx.callbackServer != null) {
-                this.ctx.callbackServer.destroy();
+            if (this.appView.callbackServer != null) {
+                this.appView.callbackServer.destroy();
             }
-            this.ctx.endActivity();
+            appView.postMessage("exit", null);
         }
     }
 
@@ -270,22 +325,39 @@ public class CordovaWebViewClient extends WebViewClient {
      */
     @Override
     public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
-        LOG.d(TAG, "DroidGap: GapViewClient.onReceivedError: Error code=%s Description=%s URL=%s", errorCode, description, failingUrl);
+        LOG.d(TAG, "CordovaWebViewClient.onReceivedError: Error code=%s Description=%s URL=%s", errorCode, description, failingUrl);
 
         // Clear timeout flag
-        this.ctx.loadUrlTimeout++;
-
-        // Stop "app loading" spinner if showing
-        this.ctx.spinnerStop();
+        this.appView.loadUrlTimeout++;
 
         // Handle error
-        this.ctx.onReceivedError(errorCode, description, failingUrl);
+        JSONObject data = new JSONObject();
+        try {
+            data.put("errorCode", errorCode);
+            data.put("description", description);
+            data.put("url", failingUrl);
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        this.appView.postMessage("onReceivedError", data);
     }
 
+    /**
+     * Notify the host application that an SSL error occurred while loading a resource.
+     * The host application must call either handler.cancel() or handler.proceed().
+     * Note that the decision may be retained for use in response to future SSL errors.
+     * The default behavior is to cancel the load.
+     *
+     * @param view          The WebView that is initiating the callback.
+     * @param handler       An SslErrorHandler object that will handle the user's response.
+     * @param error         The SSL error object.
+     */
+    @Override
     public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
 
-        final String packageName = this.ctx.getPackageName();
-        final PackageManager pm = this.ctx.getPackageManager();
+        final String packageName = this.cordova.getActivity().getPackageName();
+        final PackageManager pm = this.cordova.getActivity().getPackageManager();
+
         ApplicationInfo appInfo;
         try {
             appInfo = pm.getApplicationInfo(packageName, PackageManager.GET_META_DATA);
@@ -303,15 +375,134 @@ public class CordovaWebViewClient extends WebViewClient {
         }
     }
 
+    /**
+     * Notify the host application to update its visited links database.
+     *
+     * @param view          The WebView that is initiating the callback.
+     * @param url           The url being visited.
+     * @param isReload      True if this url is being reloaded.
+     */
     @Override
     public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
         /*
          * If you do a document.location.href the url does not get pushed on the stack
          * so we do a check here to see if the url should be pushed.
          */
-        if (!this.ctx.peekAtUrlStack().equals(url)) {
-            this.ctx.pushUrl(url);
+        if (!this.appView.peekAtUrlStack().equals(url)) {
+            this.appView.pushUrl(url);
         }
+    }
+
+    /**
+     * Sets the authentication token.
+     *
+     * @param authenticationToken
+     * @param host
+     * @param realm
+     */
+    public void setAuthenticationToken(AuthenticationToken authenticationToken, String host, String realm) {
+        if (host == null) {
+            host = "";
+        }
+        if (realm == null) {
+            realm = "";
+        }
+        this.authenticationTokens.put(host.concat(realm), authenticationToken);
+    }
+
+    /**
+     * Removes the authentication token.
+     *
+     * @param host
+     * @param realm
+     *
+     * @return the authentication token or null if did not exist
+     */
+    public AuthenticationToken removeAuthenticationToken(String host, String realm) {
+        return this.authenticationTokens.remove(host.concat(realm));
+    }
+
+    /**
+     * Gets the authentication token.
+     *
+     * In order it tries:
+     * 1- host + realm
+     * 2- host
+     * 3- realm
+     * 4- no host, no realm
+     *
+     * @param host
+     * @param realm
+     *
+     * @return the authentication token
+     */
+    public AuthenticationToken getAuthenticationToken(String host, String realm) {
+        AuthenticationToken token = null;
+        token = this.authenticationTokens.get(host.concat(realm));
+
+        if (token == null) {
+            // try with just the host
+            token = this.authenticationTokens.get(host);
+
+            // Try the realm
+            if (token == null) {
+                token = this.authenticationTokens.get(realm);
+            }
+
+            // if no host found, just query for default
+            if (token == null) {
+                token = this.authenticationTokens.get("");
+            }
+        }
+
+        return token;
+    }
+
+    /**
+     * Clear all authentication tokens.
+     */
+    public void clearAuthenticationTokens() {
+        this.authenticationTokens.clear();
+    }
+
+    @Override
+    public WebResourceResponse shouldInterceptRequest(WebView view, String url) {
+        if(url.contains("?") || url.contains("#")){
+            return generateWebResourceResponse(url);
+        } else {
+            return super.shouldInterceptRequest(view, url);
+        }
+    }
+
+    private WebResourceResponse generateWebResourceResponse(String url) {
+        final String ANDROID_ASSET = "file:///android_asset/";
+        if (url.startsWith(ANDROID_ASSET)) {
+            String niceUrl = url;
+            niceUrl = url.replaceFirst(ANDROID_ASSET, "");
+            if(niceUrl.contains("?")){
+                niceUrl = niceUrl.split("\\?")[0];
+            }
+            else if(niceUrl.contains("#"))
+            {
+                niceUrl = niceUrl.split("#")[0];
+            }
+
+            String mimetype = null;
+            if(niceUrl.endsWith(".html")){
+                mimetype = "text/html";
+            }
+
+            try {
+                AssetManager assets = cordova.getActivity().getAssets();
+                Uri uri = Uri.parse(niceUrl);
+                InputStream stream = assets.open(uri.getPath(), AssetManager.ACCESS_STREAMING);
+                WebResourceResponse response = new WebResourceResponse(mimetype, "UTF-8", stream);
+                return response;
+            } catch (IOException e) {
+                LOG.e("generateWebResourceResponse", e.getMessage(), e);
+            }
+        }
+        return null;
     }
 
     /**

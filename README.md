@@ -18,12 +18,20 @@ Requires
 - Java JDK 1.5
 - Apache ANT
 - Android SDK [http://developer.android.com](http://developer.android.com)
+- Apache Commons Codec [http://commons.apache.org/codec/](http://commons.apache.org/codec/)
 
-
+Test Requirements
+---
+- JUnit - [https://github.com/KentBeck/junit](https://github.com/KentBeck/junit)
+ 
 Building
 ---
 
-To create your cordova.jar, run in the framework directory:
+To create your cordova.jar, copy the commons codec:
+
+    mv commons-codec-1.6.jar framework/libs
+
+then run in the framework directory:
 
     android update project -p . -t android-15
     ant jar
@@ -33,6 +41,14 @@ Cordova Android Developer Tools
 ---
 
 The Cordova developer tooling is split between general tooling and project level tooling. 
+
+To enable the command-line tools available in the ./bin directory, make
+sure you have all of the dependencies installed. You will need
+[NodeJS](http://nodejs.org) (which should come with `npm`). To install
+the dependencies:
+
+    $ cd bin
+    $ npm install
 
 General Commands
 
@@ -86,6 +102,9 @@ Importing a Cordova Android Project into Eclipse
 5. Right click on the project root: Run as > Run Configurations
 6. Click on the Target tab and select Manual (this way you can choose the emulator or device to build to)
 
+Running Tests
+----
+Please see details under test/README.md.
 
 Further Reading
 ---

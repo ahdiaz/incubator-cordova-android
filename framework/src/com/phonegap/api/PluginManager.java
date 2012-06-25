@@ -18,19 +18,20 @@
 */
 package com.phonegap.api;
 
+import org.apache.cordova.CordovaWebView;
 import org.apache.cordova.api.CordovaInterface;
 
 import android.webkit.WebView;
 
 /**
  * PluginManager is exposed to JavaScript in the Cordova WebView.
- * 
+ *
  * Calling native plugin code can be done by calling PluginManager.exec(...)
  * from JavaScript.
  */
 public class PluginManager extends org.apache.cordova.api.PluginManager {
 
-    public PluginManager(WebView app, CordovaInterface ctx) {
-        super(app, ctx);
+    public PluginManager(WebView app, CordovaInterface ctx) throws Exception {
+        super((CordovaWebView) app, ctx);
     }
 }

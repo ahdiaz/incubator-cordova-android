@@ -18,7 +18,10 @@
  */
 package org.apache.cordova.api;
 
-import android.webkit.WebView;
+import org.apache.cordova.CordovaWebView;
+
+//import android.content.Context;
+//import android.webkit.WebView;
 
 /**
  * This class represents a service entry object.
@@ -43,13 +46,13 @@ public class PluginEntry {
     public IPlugin plugin = null;
 
     /**
-     * Flag that indicates the plugin object should be created when PluginManager is initialized. 
+     * Flag that indicates the plugin object should be created when PluginManager is initialized.
      */
     public boolean onload = false;
 
     /**
      * Constructor
-     * 
+     *
      * @param service               The name of the service
      * @param pluginClass           The plugin class name
      * @param onload                Create plugin object when HTML page is loaded
@@ -63,15 +66,15 @@ public class PluginEntry {
     /**
      * Create plugin object.
      * If plugin is already created, then just return it.
-     * 
+     *
      * @return                      The plugin object
      */
-    @SuppressWarnings("unchecked")
-    public IPlugin createPlugin(WebView webView, CordovaInterface ctx) {
+    public IPlugin createPlugin(CordovaWebView webView, CordovaInterface ctx) {
         if (this.plugin != null) {
             return this.plugin;
         }
         try {
+            @SuppressWarnings("rawtypes")
             Class c = getClassByName(this.pluginClass);
             if (isCordovaPlugin(c)) {
                 this.plugin = (IPlugin) c.newInstance();
@@ -88,12 +91,12 @@ public class PluginEntry {
 
     /**
      * Get the class.
-     * 
+     *
      * @param clazz
      * @return
      * @throws ClassNotFoundException
      */
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings("rawtypes")
     private Class getClassByName(final String clazz) throws ClassNotFoundException {
         Class c = null;
         if (clazz != null) {
@@ -105,11 +108,11 @@ public class PluginEntry {
     /**
      * Get the interfaces that a class implements and see if it implements the
      * org.apache.cordova.api.Plugin interface.
-     * 
+     *
      * @param c                     The class to check the interfaces of.
      * @return                      Boolean indicating if the class implements org.apache.cordova.api.Plugin
      */
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings("rawtypes")
     private boolean isCordovaPlugin(Class c) {
         if (c != null) {
             return org.apache.cordova.api.Plugin.class.isAssignableFrom(c) || org.apache.cordova.api.IPlugin.class.isAssignableFrom(c);
